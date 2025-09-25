@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Geo Quiz AI</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f9fafb;
+      color: #333;
+      margin: 0;
+      padding: 16px;
+      position: relative;
+    }
+    body.dark {
+      background-color: #111827;
+      color: #e5e7eb;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 32px;
+      position: relative;
+      z-index: 30;
+    }
+    .header h1 {
+      font-size: 2rem;
+      color: #3b82f6;
+    }
+    .header button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 9999px;
+      background-color: #3b82f6;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .header button:hover {
+      background-color: #2563eb;
+    }
+    .quiz-section {
+      margin-bottom: 32px;
+      position: relative;
+      z-index: 10;
+    }
+    .quiz-card {
+      background-color: white;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    body.dark .quiz-card {
+      background-color: #1f2937;
+      color: #e5e7eb;
+    }
+    .quiz-card p {
+      margin-bottom: 12px;
+      font-weight: bold;
+    }
+    .quiz-card button {
+      padding: 8px 12px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      margin-bottom: 4px;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .quiz-card button.correct { background-color: #22c55e; color: white; border-color: #16a34a; }
+    .quiz-card button.wrong { background-color: #ef4444; color: white; border-color: #b91c1c; }
+    .quiz-card button.selected { background-color: #3b82f6; color: white; border-color: #2563eb; }
+    .quiz-card textarea {
+      width: 100%;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      margin-top: 8px;
+      font-family: inherit;
+      resize: vertical;
+    }
+    .quiz-card .explanation {
+      background-color: #f3f4f6;
+      padding: 8px;
+      border-radius: 4px;
+      margin-top: 8px;
+    }
+    body.dark .quiz-card .explanation {
+      background-color: #374151;
+      color: #d1d5db;
+    }
+    .verify-btn {
+      display: block;
+      margin: 32px auto;
+      padding: 8px 16px;
+      border-radius: 9999px;
+      border: none;
+      background-color: #16a34a;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .verify-btn:hover { background-color: #15803d; }
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background-color: rgba(249,249,251,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      z-index: 20;
+    }
+    body.dark .overlay { background-color: rgba(17,24,39,0.8); color: #e5e7eb; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>Geo Quiz AI</h1>
+    <button id="playBtn">Play</button>
+  </div>
+
+  <div id="quizContainer"></div>
+
+  <button id="verifyBtn" class="verify-btn" style="display:none;">Sprawdź odpowiedzi</button>
+
+  <div id="overlay" class="overlay" style="display:none;"></div>
+
+  <script>
+    const quizContainer = document.getElementById('quizContainer');
+    const overlay = document.getElementById('overlay');
+    const verifyBtn = document.getElementById('verifyBtn');
+    const playBtn = document.getElementById('playBtn');
+
+    let questionsABCD = [];
+    let questionsTF = [];
+    let questionsOpen = [];
+    let verified = false;
+
+    const API_BASE = 'https://gegra-ftasapi.onrender.com';
+
+    playBtn.addEventListener('click', fetchAllQuestions);
+    verifyBtn.addEventListener('click', handleVerify);
+
+    function showOverlay(text) {
+      overlay.innerText = text;
+      overlay.style.display = 'flex';
+    }
+
+    function hideOverlay() {
+      overlay.style.display = 'none';
+    }
+
+    async function fetchAllQuestions() {
+      showOverlay('Pobieranie Geo Quiz...');
+      verified = false;
+      quizContainer.innerHTML = '';
+      questionsABCD = [];
+      questionsTF = [];
+      questionsOpen = [];
+      verifyBtn.style.display = 'none';
+
+      try {
+        const [resABCD, resTF, resOpen] = await Promise.all([
+          fetch(`${API_BASE}/chatABCD`).then(r => r.json()),
+          fetch(`${API_BASE}/chatTRUEFALSE`).then(r => r.json()),
+          fetch(`${API_BASE}/chatOPEN`).then(r => r.json())
+        ]);
+
+        questionsABCD = resABCD.questions.map(q => ({ ...q, userOptionIndex: 0 }));
+        questionsTF = resTF.questions.map(q => ({ ...q, userOptionIndex: 0 }));
+        questionsOpen = resOpen.questions.map(q => ({ question: q, userAnswer: '' }));
+
+        renderQuiz();
+        verifyBtn.style.display = 'block';
+
+      } catch (err) {
+        alert('Błąd pobierania pytań!');
+        console.error(err);
+      } finally {
+        hideOverlay();
+      }
+    }
+
+    function renderQuiz() {
+      quizContainer.innerHTML = '';
+
+      // ABCD
+      if (questionsABCD.length) {
+        const section = document.createElement('div');
+        section.className = 'quiz-section';
+        const title = document.createElement('h2');
+        title.innerText = 'ABCD Pytania';
+        section.appendChild(title);
+
+        questionsABCD.forEach((q, i) => {
+          const card = document.createElement('div');
+          card.className = 'quiz-card';
+          const p = document.createElement('p');
+          p.innerText = `${i+1}. ${q.question}`;
+          card.appendChild(p);
+
+          q.options.forEach((opt, oi) => {
+            const btn = document.createElement('button');
+            btn.innerText = opt;
+            btn.className = oi === q.userOptionIndex ? 'selected' : '';
+            btn.disabled = verified;
+            btn.onclick = () => {
+              if (verified) return;
+              q.userOptionIndex = oi;
+              renderQuiz();
+            };
+            card.appendChild(btn);
+          });
+
+          if (verified && q.explanation) {
+            const exp = document.createElement('div');
+            exp.className = 'explanation';
+            exp.innerText = 'Wyjaśnienie: ' + q.explanation;
+            card.appendChild(exp);
+          }
+
+          section.appendChild(card);
+        });
+        quizContainer.appendChild(section);
+      }
+
+      // True/False
+      if (questionsTF.length) {
+        const section = document.createElement('div');
+        section.className = 'quiz-section';
+        const title = document.createElement('h2');
+        title.innerText = 'Pytania Prawda/Fałsz';
+        section.appendChild(title);
+
+        questionsTF.forEach((q, i) => {
+          const card = document.createElement('div');
+          card.className = 'quiz-card';
+          const p = document.createElement('p');
+          p.innerText = `${i+1}. ${q.question}`;
+          card.appendChild(p);
+
+          [1,0].forEach(val => {
+            const btn = document.createElement('button');
+            btn.innerText = val === 1 ? 'Prawda' : 'Fałsz';
+            if (val === q.userOptionIndex) btn.className = 'selected';
+            btn.disabled = verified;
+            btn.onclick = () => {
+              if (verified) return;
+              q.userOptionIndex = val;
+              renderQuiz();
+            };
+            card.appendChild(btn);
+          });
+
+          if (verified && q.explanation) {
+            const exp = document.createElement('div');
+            exp.className = 'explanation';
+            exp.innerText = 'Wyjaśnienie: ' + q.explanation;
+            card.appendChild(exp);
+          }
+
+          section.appendChild(card);
+        });
+        quizContainer.appendChild(section);
+      }
+
+      // Open
+      if (questionsOpen.length) {
+        const section = document.createElement('div');
+        section.className = 'quiz-section';
+        const title = document.createElement('h2');
+        title.innerText = 'Pytania Otwarte';
+        section.appendChild(title);
+
+        questionsOpen.forEach((q,i) => {
+          const card = document.createElement('div');
+          card.className = 'quiz-card';
+          const p = document.createElement('p');
+          p.innerText = `${i+1}. ${q.question}`;
+          card.appendChild(p);
+
+          const ta = document.createElement('textarea');
+          ta.value = q.userAnswer;
+          ta.disabled = verified;
+          ta.oninput = (e) => q.userAnswer = e.target.value;
+          card.appendChild(ta);
+
+          if (verified && q.explanation) {
+            const exp = document.createElement('div');
+            exp.className = 'explanation';
+            exp.innerText = 'Wyjaśnienie: ' + q.explanation;
+            card.appendChild(exp);
+          }
+
+          section.appendChild(card);
+        });
+
+        quizContainer.appendChild(section);
+      }
+    }
+
+    async function handleVerify() {
+      showOverlay('Sprawdzanie odpowiedzi...');
+      try {
+        // ABCD
+        questionsABCD = await Promise.all(questionsABCD.map(async q => {
+          const res = await fetch(`${API_BASE}/verify_ABCD`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              question: q.question,
+              options: q.options,
+              correctOptionIndex: q.correctOptionIndex,
+              userOptionIndex: q.userOptionIndex
+            })
+          });
+          const data = await res.json();
+          return {...q, explanation: typeof data.verify === 'string' ? data.verify : data.verify.content};
+        }));
+
+        // True/False
+        questionsTF = await Promise.all(questionsTF.map(async q => {
+          const res = await fetch(`${API_BASE}/verify_TRUEFALSE`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              question: q.question,
+              answer: q.answer,
+              optionAnswer: q.userOptionIndex
+            })
+          });
+          const data = await res.json();
+          return {...q, explanation: typeof data.verify === 'string' ? data.verify : data.verify.content};
+        }));
+
+        // Open
+        questionsOpen = await Promise.all(questionsOpen.map(async q => {
+          const res = await fetch(`${API_BASE}/verify_OPEN`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              question: q.question,
+              userAnswer: q.userAnswer
+            })
+          });
+          const data = await res.json();
+          return {...q, explanation: typeof data.verify === 'string' ? data.verify : data.verify.content};
+        }));
+
+        verified = true;
+        renderQuiz();
+      } catch(err) {
+        alert('Błąd podczas weryfikacji!');
+        console.error(err);
+      } finally {
+        hideOverlay();
+      }
+    }
+
+  </script>
+</body>
+</html>
