@@ -11,6 +11,7 @@
       color: #333;
       margin: 0;
       padding: 16px;
+      position: relative;
     }
     body.dark {
       background-color: #111827;
@@ -117,15 +118,6 @@
       z-index: 20;
     }
     body.dark .overlay { background-color: rgba(17,24,39,0.8); color: #e5e7eb; }
-    #rawResponse {
-      white-space: pre-wrap;
-      background:#f3f4f6;
-      padding:8px;
-      border-radius:4px;
-      margin-bottom:16px;
-      font-size: 0.875rem;
-    }
-    body.dark #rawResponse { background:#374151; color:#d1d5db; }
   </style>
 </head>
 <body>
@@ -135,9 +127,6 @@
     <button id="playBtn">Play</button>
   </div>
 
-  <!-- Raw response from server -->
-  <div id="rawResponse"></div>
-
   <div id="quizContainer"></div>
 
   <button id="verifyBtn" class="verify-btn" style="display:none;">Sprawdź odpowiedzi</button>
@@ -145,17 +134,17 @@
   <div id="overlay" class="overlay" style="display:none;"></div>
 
   <script>
-    const API_BASE = 'https://gegra-ftasapi.onrender.com';
     const quizContainer = document.getElementById('quizContainer');
     const overlay = document.getElementById('overlay');
     const verifyBtn = document.getElementById('verifyBtn');
     const playBtn = document.getElementById('playBtn');
-    const rawResponseDiv = document.getElementById('rawResponse');
 
     let questionsABCD = [];
     let questionsTF = [];
     let questionsOpen = [];
     let verified = false;
+
+    const API_BASE = 'https://gegra-ftasapi.onrender.com';
 
     playBtn.addEventListener('click', fetchAllQuestions);
     verifyBtn.addEventListener('click', handleVerify);
@@ -177,33 +166,22 @@
       questionsTF = [];
       questionsOpen = [];
       verifyBtn.style.display = 'none';
-      rawResponseDiv.innerText = '';
 
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 900000); // 900 секунд = 15 минут
-
         const [resABCD, resTF, resOpen] = await Promise.all([
-          fetch(`${API_BASE}/chatABCD`, { signal: controller.signal }),
-          fetch(`${API_BASE}/chatTRUEFALSE`, { signal: controller.signal }),
-          fetch(`${API_BASE}/chatOPEN`, { signal: controller.signal })
+          fetch(`${API_BASE}/chatABCD`).then(r => r.json()),
+          fetch(`${API_BASE}/chatTRUEFALSE`).then(r => r.json()),
+          fetch(`${API_BASE}/chatOPEN`).then(r => r.json())
         ]);
 
-        clearTimeout(timeout);
-
-        const dataABCD = await resABCD.json();
-        const dataTF = await resTF.json();
-        const dataOpen = await resOpen.json();
-
-        questionsABCD = dataABCD.questions.map(q => ({ ...q, userOptionIndex: 0 }));
-        questionsTF = dataTF.questions.map(q => ({ ...q, userOptionIndex: 0 }));
-        questionsOpen = dataOpen.questions.map(q => ({ question: q, userAnswer: '' }));
-
-        rawResponseDiv.innerText = JSON.stringify(dataABCD, null, 2);
+        questionsABCD = resABCD.questions.map(q => ({ ...q, userOptionIndex: 0 }));
+        questionsTF = resTF.questions.map(q => ({ ...q, userOptionIndex: 0 }));
+        questionsOpen = resOpen.questions.map(q => ({ question: q, userAnswer: '' }));
 
         renderQuiz();
         verifyBtn.style.display = 'block';
-      } catch(err) {
+
+      } catch (err) {
         alert('Błąd pobierania pytań!');
         console.error(err);
       } finally {
@@ -332,41 +310,50 @@
     async function handleVerify() {
       showOverlay('Sprawdzanie odpowiedzi...');
       try {
-        // Имитация проверки через сервер
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 900000); // 900 секунд
+        // ABCD
+        questionsABCD = await Promise.all(questionsABCD.map(async q => {
+          const res = await fetch(`${API_BASE}/verify_ABCD`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              question: q.question,
+              options: q.options,
+              correctOptionIndex: q.correctOptionIndex,
+              userOptionIndex: q.userOptionIndex
+            })
+          });
+          const data = await res.json();
+          return {...q, explanation: typeof data.verify === 'string' ? data.verify : data.verify.content};
+        }));
 
-        const [resABCD, resTF, resOpen] = await Promise.all([
-          fetch(`${API_BASE}/verify_ABCD`, {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ questions: questionsABCD }),
-            signal: controller.signal
-          }),
-          fetch(`${API_BASE}/verify_TRUEFALSE`, {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ questions: questionsTF }),
-            signal: controller.signal
-          }),
-          fetch(`${API_BASE}/verify_OPEN`, {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ questions: questionsOpen }),
-            signal: controller.signal
-          })
-        ]);
+        // True/False
+        questionsTF = await Promise.all(questionsTF.map(async q => {
+          const res = await fetch(`${API_BASE}/verify_TRUEFALSE`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              question: q.question,
+              answer: q.answer,
+              optionAnswer: q.userOptionIndex
+            })
+          });
+          const data = await res.json();
+          return {...q, explanation: typeof data.verify === 'string' ? data.verify : data.verify.content};
+        }));
 
-        clearTimeout(timeout);
-
-        const dataABCD = await resABCD.json();
-        const dataTF = await resTF.json();
-        const dataOpen = await resOpen.json();
-
-        // Пример генерации объяснений
-        questionsABCD.forEach((q,i) => q.explanation = dataABCD[i]?.explanation || 'Poprawna odpowiedź.');
-        questionsTF.forEach((q,i) => q.explanation = dataTF[i]?.explanation || 'Poprawna odpowiedź.');
-        questionsOpen.forEach((q,i) => q.explanation = dataOpen[i]?.explanation || 'Poprawna odpowiedź.');
+        // Open
+        questionsOpen = await Promise.all(questionsOpen.map(async q => {
+          const res = await fetch(`${API_BASE}/verify_OPEN`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              question: q.question,
+              userAnswer: q.userAnswer
+            })
+          });
+          const data = await res.json();
+          return {...q, explanation: typeof data.verify === 'string' ? data.verify : data.verify.content};
+        }));
 
         verified = true;
         renderQuiz();
